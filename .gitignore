@@ -1,1 +1,6 @@
 out/
+
+.cache
+app
+compile_commands.json
+*.o

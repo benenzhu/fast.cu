@@ -15,7 +15,8 @@
 #include <cassert>
 #include <unistd.h>
 
-typedef __nv_bfloat16 bf16;
+constexpr int max_size = 8192;
+typedef __nv_bfloat16 bf16; 
 #define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
 
 void cudaCheck(cudaError_t error, const char *file, int line) {
@@ -99,9 +100,16 @@ void run_kernel(int kernel_num, int M, int N, int K, bf16 *A, bf16 *B, bf16 *C, 
 }
 int yo = 0;
 void randomize_matrix(bf16 *mat, int N) {
-  std::normal_distribution<float> distribution(0, 1);
-  for (int i = 0; i < N; i++) {
-    mat[i] = distribution(generator);
+  std::cout << "get random for " << N << std::endl;
+  // std::normal_distribution<float> distribution(0, 1);
+  #pragma omp parallel for
+  for (int i = 0; i < 16; i++) {
+    std::mt19937 engine(i);
+    std::uniform_real_distribution<float> distribution(0, 1);
+    int start_pos = i * N / 16;
+    for(int j = 0; j < N/16; j++) {
+      mat[start_pos+j] = distribution(engine);
+    }
   }
   ++yo;
 }
@@ -127,16 +135,16 @@ __global__ void warmupKernel() {
   s[0] += s[1];
 }
 
-int main() {
+int main(int argc, char **argv) {
   warmupKernel<<<1024, 1024>>>();
 
+  printf("start cublasCreate\n");
   cublasCreate(&cublas_handle);
   float elapsed_time;
   cudaEvent_t start, stop;
   cudaEventCreate(&start);
   cudaEventCreate(&stop);
 
-  long max_size = 8192;
   long m = max_size, n = max_size, k = max_size;
 
   bf16 *A = nullptr, *B = nullptr, *C = nullptr,
@@ -166,13 +174,23 @@ int main() {
   cudaMemcpyHostToDevice));
   cudaCheck(cudaMemcpy(dB, B, sizeof(bf16) * max_size * max_size,
       cudaMemcpyHostToDevice));
+  
+
+  printf("argc: %d \n", argc);
+  std::vector<int> input_nums = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+  if(argc >= 2) {
+    int input_num = std::stoi(argv[1]);
+    input_nums = {input_num};
+  }
+
 
   int repeat_times = 8;
   bool run_verif = true;
-  for (int kernel_num : {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}) {
+  for (int kernel_num : input_nums) {
     // for (int kernel_num : {0, 11}) {
     // Give the GPU some rest to avoid thermal throttling
-    sleep(5);
+    std::cout << "start sleep 1s" << std::endl;
+    sleep(1);
     std::cout << "KERNEL " << kernel_num << std::endl;
     // Verify against cuBLAS. Also serves as a warmup step.
     if (run_verif) {
